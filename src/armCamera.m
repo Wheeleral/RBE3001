@@ -1,0 +1,281 @@
+javaaddpath('../lib/hid4java-0.5.1.jar');
+
+import org.hid4java.*;
+import org.hid4java.event.*;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.lang.*;
+
+links = [200, 166, 200];
+calibration = [-224, 1855, -1185];
+pp = PacketProcessor(7);
+
+arm = Arm(links, pp);
+
+index = 1;
+historyX = [];
+historyY = [];
+historyZ = [];
+hisx=[];
+hisy=[];
+hisz=[];
+u=[];
+
+hisVeltip=[];
+hisvel1=[];
+hisvel2=[];
+hisvel3=[];
+
+if ~exist('cam', 'var')
+    cam = webcam;
+end
+totaldata = [];
+arm.setPID([.0033 .0033 .0033], [0 0 0], [0.01 0.01 0.01]);
+
+while 1
+    %Camera
+img = snapshot(cam); %get image
+imgM = maskBlue(img) + maskYellow(img) + maskGreen(img); %get the mask
+
+imgM= boolean(bwlabel(imgM)); %make into black and white
+BWL = bwareafilt(imgM,1);
+imgL= regionprops(BWL, 'BoundingBox', 'Centroid'); %get the centroid 
+
+%overlay centroid 
+centroid = imgL.Centroid;
+imshow(img);
+%hold on
+%plot(centroid(1),centroid(2), 'bh', 'MarkerSize', 10, 'LineWidth', 4); %plot the cnetorids on the image
+%hold off
+%disp(centroid);
+
+%convert cnetroid to x and y
+[x, y]=mn2xy(centroid(1), centroid(2));
+
+
+posVector = [x*10 y*10 50];
+
+%move the robot to that xy coords...
+angles = arm.getd();
+curPos = arm.link3(angles(1)+90, angles(2), angles(3));
+
+
+desiredVel = (posVector - curPos)*2
+jointVel = arm.invVelocityKin(angles(1), angles(2), angles(3), desiredVel(1), -desiredVel(2), desiredVel(3));
+setAng = jointVel*toc + angles;
+arm.setd(setAng);
+
+%data collection
+    vels = arm.getV();
+    veltip =sqrt(desiredVel(1)*desiredVel(1)+desiredVel(2)*desiredVel(2)+desiredVel(3)*desiredVel(3));
+    data = [veltip ;vels(1) ;vels(2); vels(3)]
+
+%totaldata= [totaldata data];
+%csvwrite("moving.csv", totaldata);
+    curXYZ = arm.link3Draw(angles(1), angles(2), angles(3));
+    historyX = [historyX curXYZ(1)];
+    historyY = [historyY curXYZ(2)];
+    historyZ = [historyZ curXYZ(3)];
+    hisx=[hisx data(1)*2];
+    hisy =[hisy data(2)];
+    hisz=[hisz 0];
+    
+    hisVeltip=[hisVeltip veltip];
+    hisvel1=[hisvel1 vels(1)];
+    hisvel2=[hisvel2 vels(2)];
+    hisvel3=[hisvel3 vels(3)];
+
+    %armDrawHist(arm, angles, links, historyY, historyX, historyZ, hisx, hisy, hisz);
+    plotData(arm, hisVeltip, hisvel1, hisvel2, hisvel3);
+    
+pause(.1);
+tic
+end
+
+arm.close();
+
+function plotData(arm, hisVeltip, hisvel1, hisvel2, hisvel3)
+  subplot(2, 1,1);
+    plot(hisVeltip);
+    title("Magnitude of Moving Velocity");
+    xlabel('Time');
+    ylabel('mm/s');
+    subplot(2,1,2);
+    plot(hisvel1);
+    hold on
+    plot(hisvel2);
+    plot(hisvel3);
+    legend("Joint 1", "Joint 2", "Joint 3");
+    title("Angluar Velocites");
+    xlabel('Time');
+    ylabel('Degrees/Second');
+    hold off
+end
+
+function armDraw(arm, angles, links)
+    angles(1) = angles(1)+90;
+    p2 = arm.link2(angles(1), angles(2));
+    p3 = arm.link3(angles(1), angles(2), angles(3));
+
+    plot3([0 0 p2(1) p3(1)],[0 0 p2(2) p3(2)],[0 links(1) p2(3) p3(3)],'-o','LineWidth',2,'MarkerSize',6,'MarkerFaceColor',[0.5,0.5,0.5]);grid on;%axis([-31,31,-31,31,0,31]);
+
+    text(p3(1),p3(2),p3(3),['  (', num2str(p3(1),3), ', ', num2str(p3(2),3),', ', num2str(p3(3),3), ')']);
+    title('3DOF Arm')
+    xlabel('X Axis');
+    ylabel('Y Axis');
+    zlabel('Z Axis');
+    axis([-links(1)*3 links(1)*3 0 links(1)*3 0 links(1)*3]);
+%     camproj('perspective')
+    h = rotate3d;
+    h.Enable = 'off';
+    
+%     pause(0.1);
+end
+
+function armDrawHist(arm, angles, links, historyX, historyY, historyZ, hisx, hisy, hisz) %draw the arm in 3D space
+%    angles(1) = angles(1)+90;
+    p2 = arm.link2(angles(1), angles(2)); %
+    p3 = arm.link3Draw(angles(1), angles(2), angles(3));
+    hold off;
+    plot3([0 0 p2(2) p3(2)],[0 0 p2(1) p3(1)],[0 links(1) p2(3) p3(3)],'-o','LineWidth',2,'MarkerSize',6,'MarkerFaceColor',[0.5,0.5,0.5]);grid on;%axis([-31,31,-31,31,0,31]);
+    hold on;
+    plot3(historyX*2, historyY, historyZ,'-','LineWidth',1);
+    plot3(hisy*-5*2, hisx*3+180,hisz ,'-','LineWidth',3,'MarkerFaceColor',[0,0,0]);
+
+    text(p3(1),p3(2),p3(3),['  (', num2str(p3(1),3), ', ', num2str(p3(2),3),', ', num2str(p3(3),3), ')']);
+    title('3DOF Arm')
+    xlabel('X Axis');
+    ylabel('Y Axis');
+    zlabel('Z Axis');
+    axis([-links(1)*3 links(1)*3 0 links(1)*3 0 links(1)*3]);
+    legend("blue is arm", "red is arm motion", "yellow is object");
+%     camproj('perspective')
+    h = rotate3d;
+    h.Enable = 'off';
+    
+%     pause(0.1);
+end
+
+function [BW,maskedRGBImage] = maskBlue(RGB)
+%createMask  Threshold RGB image using auto-generated code from colorThresholder app.
+%  [BW,MASKEDRGBIMAGE] = createMask(RGB) thresholds image RGB using
+%  auto-generated code from the colorThresholder App. The colorspace and
+%  minimum/maximum values for each channel of the colorspace were set in the
+%  App and result in a binary mask BW and a composite image maskedRGBImage,
+%  which shows the original RGB image values under the mask BW.
+
+% Auto-generated by colorThresholder app on 02-Oct-2017
+%------------------------------------------------------
+
+
+% Convert RGB image to chosen color space
+I = rgb2hsv(RGB);
+
+% Define thresholds for channel 1 based on histogram settings
+channel1Min = 0.561;
+channel1Max = 0.660;
+
+% Define thresholds for channel 2 based on histogram settings
+channel2Min = 0.000;
+channel2Max = 1.000;
+
+% Define thresholds for channel 3 based on histogram settings
+channel3Min = 0.282;
+channel3Max = 1.000;
+
+% Create mask based on chosen histogram thresholds
+sliderBW = (I(:,:,1) >= channel1Min ) & (I(:,:,1) <= channel1Max) & ...
+    (I(:,:,2) >= channel2Min ) & (I(:,:,2) <= channel2Max) & ...
+    (I(:,:,3) >= channel3Min ) & (I(:,:,3) <= channel3Max);
+BW = sliderBW;
+
+% Initialize output masked image based on input image.
+maskedRGBImage = RGB;
+
+% Set background pixels where BW is false to zero.
+maskedRGBImage(repmat(~BW,[1 1 3])) = 0;
+
+end
+
+function [BW,maskedRGBImage] = maskYellow(RGB)
+%createMask  Threshold RGB image using auto-generated code from colorThresholder app.
+%  [BW,MASKEDRGBIMAGE] = createMask(RGB) thresholds image RGB using
+%  auto-generated code from the colorThresholder App. The colorspace and
+%  minimum/maximum values for each channel of the colorspace were set in the
+%  App and result in a binary mask BW and a composite image maskedRGBImage,
+%  which shows the original RGB image values under the mask BW.
+
+% Auto-generated by colorThresholder app on 02-Oct-2017
+%------------------------------------------------------
+
+
+% Convert RGB image to chosen color space
+I = rgb2hsv(RGB);
+
+% Define thresholds for channel 1 based on histogram settings
+channel1Min = 0.158;
+channel1Max = 0.199;
+
+% Define thresholds for channel 2 based on histogram settings
+channel2Min = 0.543;
+channel2Max = 1.000;
+
+% Define thresholds for channel 3 based on histogram settings
+channel3Min = 0.718;
+channel3Max = 0.941;
+
+% Create mask based on chosen histogram thresholds
+sliderBW = (I(:,:,1) >= channel1Min ) & (I(:,:,1) <= channel1Max) & ...
+    (I(:,:,2) >= channel2Min ) & (I(:,:,2) <= channel2Max) & ...
+    (I(:,:,3) >= channel3Min ) & (I(:,:,3) <= channel3Max);
+BW = sliderBW;
+
+% Initialize output masked image based on input image.
+maskedRGBImage = RGB;
+
+% Set background pixels where BW is false to zero.
+maskedRGBImage(repmat(~BW,[1 1 3])) = 0;
+
+end
+
+function [BW,maskedRGBImage] = maskGreen(RGB)
+%createMask  Threshold RGB image using auto-generated code from colorThresholder app.
+%  [BW,MASKEDRGBIMAGE] = createMask(RGB) thresholds image RGB using
+%  auto-generated code from the colorThresholder App. The colorspace and
+%  minimum/maximum values for each channel of the colorspace were set in the
+%  App and result in a binary mask BW and a composite image maskedRGBImage,
+%  which shows the original RGB image values under the mask BW.
+
+% Auto-generated by colorThresholder app on 02-Oct-2017
+%------------------------------------------------------
+
+
+% Convert RGB image to chosen color space
+I = rgb2hsv(RGB);
+
+% Define thresholds for channel 1 based on histogram settings
+channel1Min = 0.340;
+channel1Max = 0.377;
+
+% Define thresholds for channel 2 based on histogram settings
+channel2Min = 0.537;
+channel2Max = 1.000;
+
+% Define thresholds for channel 3 based on histogram settings
+channel3Min = 0.186;
+channel3Max = 1.000;
+
+% Create mask based on chosen histogram thresholds
+sliderBW = (I(:,:,1) >= channel1Min ) & (I(:,:,1) <= channel1Max) & ...
+    (I(:,:,2) >= channel2Min ) & (I(:,:,2) <= channel2Max) & ...
+    (I(:,:,3) >= channel3Min ) & (I(:,:,3) <= channel3Max);
+BW = sliderBW;
+
+% Initialize output masked image based on input image.
+maskedRGBImage = RGB;
+
+% Set background pixels where BW is false to zero.
+maskedRGBImage(repmat(~BW,[1 1 3])) = 0;
+
+end
+
